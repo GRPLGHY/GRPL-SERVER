@@ -5,23 +5,21 @@ from datetime import date
 from mcp.server.fastmcp import FastMCP
 
 # ---------------------------------------------------------------------------
-# You do NOT edit anything in this file.
-# All the real values are set on Render's website as "environment variables":
+# THE LOGIN  -  set these three on Render as environment variables:
+#     WIZAPP_GROUP_CODE   the GroupCode  (avn0116)
+#     WIZAPP_USERNAME     the userName from SoftInfo's document
+#     WIZAPP_PASSWORD     the passwd from the document  (NO spaces)
+# Nothing secret is written in this file.
 #
-#   WIZAPP_GROUP_CODE   the GroupCode (e.g. avn0116)
-#   WIZAPP_USERNAME     the userName from SoftInfo's document
-#   WIZAPP_PASSWORD     the passwd from SoftInfo's document (no spaces!)
-#   REPORT_ID           HOW0000268   (Stock Analysis report)
-#   FILTER_ID           NF00000286   (its named filter)
-#
-# Nothing secret lives in this code.
+# THE REPORT CODES  -  not secret. If SoftInfo ever changes a report's
+# code, this is the only spot to edit (then re-upload this file):
+STOCK_REPORT_ID    = "HOW0000275"   # Stock Analysis
+CUSTOMER_REPORT_ID = "HOW0000277"   # Customer Analysis
 # ---------------------------------------------------------------------------
 
 GROUP_CODE = os.environ.get("WIZAPP_GROUP_CODE", "")
 USERNAME   = os.environ.get("WIZAPP_USERNAME", "")
 PASSWORD   = os.environ.get("WIZAPP_PASSWORD", "")
-REPORT_ID  = os.environ.get("REPORT_ID", "")
-FILTER_ID  = os.environ.get("FILTER_ID", "")
 
 BASE = "https://wizapp.in"
 
@@ -33,8 +31,7 @@ mcp = FastMCP(
 
 
 def _extract_token(resp_text: str) -> str:
-    """The login steps may return a bare token, or a token wrapped in JSON.
-    This pulls the token out either way."""
+    """Login steps may return a bare token or one wrapped in JSON; handle both."""
     t = (resp_text or "").strip()
     try:
         data = json.loads(t)
@@ -52,7 +49,7 @@ def _extract_token(resp_text: str) -> str:
 
 
 async def _get_access_token(client: httpx.AsyncClient) -> str:
-    # Step 1: show ID (login) -> get a refresh token
+    # Step 1: log in -> refresh token
     r1 = await client.post(
         f"{BASE}/restWizappservice/validateUser",
         params={"GroupCode": GROUP_CODE},
@@ -62,7 +59,7 @@ async def _get_access_token(client: httpx.AsyncClient) -> str:
     r1.raise_for_status()
     refresh_token = _extract_token(r1.text)
 
-    # Step 2: swap refresh token -> short-lived access token (the "pass")
+    # Step 2: refresh token -> short-lived access token
     r2 = await client.get(
         f"{BASE}/restWizappservice/getAccessToken",
         params={"GroupCode": GROUP_CODE},
@@ -72,40 +69,37 @@ async def _get_access_token(client: httpx.AsyncClient) -> str:
     return _extract_token(r2.text)
 
 
-@mcp.tool()
-async def get_stock_analysis_report(from_date: str = "", to_date: str = "") -> str:
-    """Fetch the SoftInfo Stock Analysis report and return its data.
-
-    Optional dates use the format YYYY-MM-DD (for example 2026-06-01).
-    If no dates are given, today's date is used for both the start and end.
-    """
+async def _fetch_report(report_id: str, from_date: str, to_date: str,
+                        filter_id: str = "") -> str:
     missing = [n for n, v in [
-        ("WIZAPP_GROUP_CODE", GROUP_CODE), ("WIZAPP_USERNAME", USERNAME),
-        ("WIZAPP_PASSWORD", PASSWORD), ("REPORT_ID", REPORT_ID),
-        ("FILTER_ID", FILTER_ID),
+        ("WIZAPP_GROUP_CODE", GROUP_CODE),
+        ("WIZAPP_USERNAME", USERNAME),
+        ("WIZAPP_PASSWORD", PASSWORD),
     ] if not v]
     if missing:
-        return ("Setup not finished. These values are not set in Render yet: "
-                + ", ".join(missing))
+        return "Setup not finished. Not set in Render yet: " + ", ".join(missing)
 
     today = date.today().isoformat()
     from_date = from_date or today
     to_date = to_date or today
 
+    params = {
+        "ReportId": report_id,
+        "FromDate": from_date,
+        "ToDate": to_date,
+        "outputFormat": "csv",
+    }
+    if filter_id:
+        params["primaryFilterId"] = filter_id
+
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
             access_token = await _get_access_token(client)
 
-            # Step 3: request the report -> get back where the file lives
+            # Step 3: request the report -> JSON telling us where the file is
             r3 = await client.post(
                 f"{BASE}/wowservice/GetReportOutput",
-                params={
-                    "ReportId": REPORT_ID,
-                    "FromDate": from_date,
-                    "ToDate": to_date,
-                    "primaryFilterId": FILTER_ID,
-                    "outputFormat": "csv",
-                },
+                params=params,
                 headers={
                     "Content-Type": "application/json",
                     "Authorization": f"Bearer {access_token}",
@@ -132,13 +126,33 @@ async def get_stock_analysis_report(from_date: str = "", to_date: str = "") -> s
             r4.raise_for_status()
             csv_text = r4.text
 
-        return f"Stock Analysis report ({from_date} to {to_date}):\n\n{csv_text}"
+        return f"Report data ({from_date} to {to_date}):\n\n{csv_text}"
 
     except httpx.HTTPStatusError as e:
-        return (f"The server replied with an error at one step "
-                f"(status {e.response.status_code}). Reply: {e.response.text[:800]}")
+        return (f"The server replied with an error (status "
+                f"{e.response.status_code}). Reply: {e.response.text[:800]}")
     except Exception as e:
         return f"Something went wrong while fetching the report: {e}"
+
+
+@mcp.tool()
+async def get_stock_analysis_report(from_date: str = "", to_date: str = "") -> str:
+    """Fetch the SoftInfo STOCK ANALYSIS report and return its data.
+
+    Optional dates use the format YYYY-MM-DD (e.g. 2026-06-01). If no dates
+    are given, today is used for both start and end.
+    """
+    return await _fetch_report(STOCK_REPORT_ID, from_date, to_date)
+
+
+@mcp.tool()
+async def get_customer_analysis_report(from_date: str = "", to_date: str = "") -> str:
+    """Fetch the SoftInfo CUSTOMER ANALYSIS report and return its data.
+
+    Optional dates use the format YYYY-MM-DD (e.g. 2026-06-01). If no dates
+    are given, today is used for both start and end.
+    """
+    return await _fetch_report(CUSTOMER_REPORT_ID, from_date, to_date)
 
 
 if __name__ == "__main__":
