@@ -13,8 +13,9 @@ from mcp.server.fastmcp import FastMCP
 #
 # THE REPORT CODES  -  not secret. If SoftInfo ever changes a report's
 # code, this is the only spot to edit (then re-upload this file):
-STOCK_REPORT_ID    = "HOW0000275"   # Stock Analysis
-CUSTOMER_REPORT_ID = "HOW0000277"   # Customer Analysis
+STOCK_REPORT_ID       = "HOW0000275"   # Stock Analysis
+CUSTOMER_REPORT_ID    = "HOW0000277"   # Customer Analysis
+TRANSACTION_REPORT_ID = "HOW0000276"   # Transaction Analysis
 # ---------------------------------------------------------------------------
 
 GROUP_CODE = os.environ.get("WIZAPP_GROUP_CODE", "")
@@ -153,6 +154,16 @@ async def get_customer_analysis_report(from_date: str = "", to_date: str = "") -
     are given, today is used for both start and end.
     """
     return await _fetch_report(CUSTOMER_REPORT_ID, from_date, to_date)
+
+
+@mcp.tool()
+async def get_transaction_analysis_report(from_date: str = "", to_date: str = "") -> str:
+    """Fetch the SoftInfo TRANSACTION ANALYSIS report and return its data.
+
+    Optional dates use the format YYYY-MM-DD (e.g. 2026-06-01). If no dates
+    are given, today is used for both start and end.
+    """
+    return await _fetch_report(TRANSACTION_REPORT_ID, from_date, to_date)
 
 
 if __name__ == "__main__":
